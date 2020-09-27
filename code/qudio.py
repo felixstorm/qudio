@@ -40,7 +40,9 @@ GPIO.setup(PIN_PLAY, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(PIN_NEXT, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
 
-is_playing = False # for toggling play/pause (stores the current status from the pushState events)
+status_is_playing = False # for toggling play/pause (stores the current status from the pushState events)
+status_seek_pos = 0       # for seek +/- 10
+status_duration = 0       # for maximum seek
 
 socketIO = SocketIO('localhost', 3000)
 
@@ -48,40 +50,68 @@ socketIO = SocketIO('localhost', 3000)
 def play(uri, service = 'mpd'):
     socketIO.emit('replaceAndPlay', {'service':service,'uri':uri})
 
-def prev_callback(channel):
-    logging.info("PREV")
-    socketIO.emit('prev')
-    ## TODO implement jump to beginning for first x seconds (or if first track)
-    ## TODO implement seek
-     
-def play_callback(channel):
-    if is_playing:
-        logging.info("PAUSE")
-        socketIO.emit('pause')
-    else:
-        logging.info("PLAY")
-        socketIO.emit('play')
+def button_play_callback(channel):
+    if GPIO.input(channel) == GPIO.LOW: # ignore spurious triggers that seem to happen after a long press
+        time_button_pressed = time.time()
+        while GPIO.input(channel) == GPIO.LOW:
+            if time.time() - time_button_pressed > 1:
+                logging.info("STOP")
+                socketIO.emit('stop')
+                break
+            time.sleep(0.1)
+        duration_pressed = time.time() - time_button_pressed
+        if duration_pressed > 0.2 and duration_pressed < 1:
+            if status_is_playing:
+                logging.info("PAUSE")
+                socketIO.emit('pause')
+            else:
+                logging.info("PLAY")
+                socketIO.emit('play')
 
-def next_callback(channel):
-    logging.info("NEXT")
-    socketIO.emit('next')
-    ## TODO implement seek
+def button_prev_next_callback(channel):
+    if GPIO.input(channel) == GPIO.LOW: # ignore spurious triggers that seem to happen after a long press
+        time_button_pressed = time.time()
+        time_seek = time_button_pressed
+        while GPIO.input(channel) == GPIO.LOW:
+            if time.time() - time_seek > 1:
+                if channel == PIN_PREV:
+                    new_pos = status_seek_pos - 10
+                elif channel == PIN_NEXT:
+                    new_pos = status_seek_pos + 10
+                if new_pos >= 0 and new_pos <= status_duration:
+                    logging.info("seek {}".format(new_pos))
+                    socketIO.emit('seek', new_pos)
+                time_seek = time.time()
+            time.sleep(0.1)
+        if time.time() - time_button_pressed < 1:
+            if channel == PIN_PREV:
+                logging.info("PREV")
+                socketIO.emit('prev')
+            elif (channel == PIN_NEXT):
+                logging.info("NEXT")
+                socketIO.emit('next')
 
 def on_pushState(*args):
-    logging.debug(args[0]['status'])
-    global is_playing
+    logging.debug(args[0])
+    global status_is_playing
     if args[0]['status'] == 'play':
-        is_playing = True
+        status_is_playing = True
     else:
-        is_playing = False
+        status_is_playing = False
+    global status_seek_pos
+    if isinstance(args[0]['seek'], int):
+        status_seek_pos = args[0]['seek'] / 1000
+    global status_duration
+    if isinstance(args[0]['duration'], int):
+        status_duration = args[0]['duration']
 
 def events_thread():
     socketIO.wait()
 
 
-GPIO.add_event_detect(PIN_PREV, GPIO.FALLING, callback=prev_callback, bouncetime=400)
-GPIO.add_event_detect(PIN_PLAY, GPIO.FALLING, callback=play_callback, bouncetime=400)
-GPIO.add_event_detect(PIN_NEXT, GPIO.FALLING, callback=next_callback, bouncetime=400)
+GPIO.add_event_detect(PIN_PLAY, GPIO.FALLING, callback=button_play_callback, bouncetime=400)
+GPIO.add_event_detect(PIN_PREV, GPIO.FALLING, callback=button_prev_next_callback, bouncetime=400)
+GPIO.add_event_detect(PIN_NEXT, GPIO.FALLING, callback=button_prev_next_callback, bouncetime=400)
 
 
 try:
