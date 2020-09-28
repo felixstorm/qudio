@@ -9,6 +9,7 @@ import select  # for polling zbarcam, see http://stackoverflow.com/a/10759061/37
 from socketIO_client import SocketIO, LoggingNamespace # see https://gist.github.com/ivesdebruycker/4b08bdd5415609ce95e597c1d28e9b9e
 from threading import Thread
 import os
+import fcntl
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s - %(message)s')
@@ -54,7 +55,8 @@ def play(uri, service = 'mpd', startPlaying = True):
 
 
 def seek(step_seconds):
-    new_pos = status_seek_pos + step_seconds
+    # nanosound_cd will not accept fractions of seconds
+    new_pos = round(status_seek_pos + step_seconds)
     if 0 <= new_pos <= status_duration:
         send_to_volumio('seek', new_pos)
 
@@ -118,6 +120,36 @@ def events_thread():
     socketIO.wait()
 
 
+def cdrom_thread():
+
+    def detect_tray():
+        """
+        detect_tray reads status of the first cd rom drive and returns:
+        1 = no disk in tray
+        2 = tray open
+        3 = reading tray
+        4 = disk in tray
+        """
+        try:
+            fd = os.open('/dev/sr0', os.O_RDONLY | os.O_NONBLOCK)
+            rv = fcntl.ioctl(fd, 0x5326)
+            os.close(fd)
+        except:
+            rv = 0
+        return rv
+
+    """
+    regularily check cd rom and start playing if cd is inserted
+    """
+    dt_old = -1
+    while True:
+        dt = detect_tray()
+        logging.debug("detect_tray() result: {}".format(dt))
+        if dt != dt_old and dt == 4:
+            # on first startup only queue but no auto play
+            play('nanosound_cd/playall', 'nanosound_cd', startPlaying = dt_old != -1)
+        time.sleep(1)
+        dt_old = dt
 
 
 try:
@@ -125,6 +157,8 @@ try:
     listener_thread = Thread(target=events_thread)
     listener_thread.daemon = True
     listener_thread.start()
+
+    Thread(target=cdrom_thread, daemon=True).start()
 
     while True:
         logging.info('Wait for photo sensor')
