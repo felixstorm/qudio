@@ -62,9 +62,9 @@ button_short_press_commands = {
     PIN_NEXT: lambda: send_to_volumio('next')
 }
 button_long_press_commands = {
-    PIN_PREV: lambda: seek(-10),
-    PIN_PLAY: lambda: send_to_volumio('stop'),
-    PIN_NEXT: lambda: seek(10)
+    PIN_PREV: lambda down_secs: seek(-5 * down_secs),
+    PIN_PLAY: lambda down_secs: send_to_volumio('stop'),
+    PIN_NEXT: lambda down_secs: seek(5 * down_secs)
 }
 
 def button_callback(channel):
@@ -74,7 +74,7 @@ def button_callback(channel):
     while GPIO.input(channel) == GPIO.LOW:
         # 0.5 seconds delay between subsequent long actons
         if time.time() - time_last_long_action > 0.5:
-            button_long_press_commands.get(channel)()
+            button_long_press_commands.get(channel)(time.time() - time_button_down)
             time_last_long_action = time.time()
         time.sleep(0.1)
     # also ignore spurious triggers that sometimes seem to happen after a long press
