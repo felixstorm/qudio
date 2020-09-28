@@ -8,6 +8,7 @@ import subprocess
 import select  # for polling zbarcam, see http://stackoverflow.com/a/10759061/3761783
 from socketIO_client import SocketIO, LoggingNamespace # see https://gist.github.com/ivesdebruycker/4b08bdd5415609ce95e597c1d28e9b9e
 from threading import Thread
+import os
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s - %(message)s')
@@ -15,8 +16,10 @@ logging.info('Initializing')
 
 # Configuration
 MUSIC_BASE_DIRECTORY = "mnt/"
-SOUND_SCANNING = "mnt/INTERNAL/qudio/sounds/scanning.mp3"
-SOUND_SCAN_FAIL = "mnt/INTERNAL/qudio/sounds/fail-05.mp3"
+this_dir = os.path.dirname(__file__)
+if this_dir.startswith("/data/"): this_dir = MUSIC_BASE_DIRECTORY + this_dir[6:]
+SOUND_SCANNING = os.path.join(this_dir, "sounds/scanning.mp3")
+SOUND_SCAN_FAIL = os.path.join(this_dir, "sounds/fail-05.mp3")
 QR_SCANNER_TIMEOUT = 4
 
 # photo sensor on PIN 5
