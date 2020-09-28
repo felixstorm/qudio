@@ -45,8 +45,13 @@ def send_to_volumio(*args):
     logging.info("Sending to Volumio: {}".format(args))
     socketIO.emit(*args)
 
-def play(uri, service = 'mpd'):
-    send_to_volumio('replaceAndPlay', {'service':service,'uri':uri})
+def play(uri, service = 'mpd', startPlaying = True):
+    if startPlaying:
+        send_to_volumio('replaceAndPlay', {'service':service,'uri':uri})
+    else:
+        send_to_volumio('clearQueue')
+        send_to_volumio('addToQueue', {'service':service,'uri':uri})
+
 
 def seek(step_seconds):
     new_pos = status_seek_pos + step_seconds
