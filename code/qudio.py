@@ -31,15 +31,6 @@ PIN_PLAY = 9
 PIN_NEXT = 11
 
 
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(PIN_SENSOR, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-GPIO.setup(PIN_LED, GPIO.OUT)
-GPIO.output(PIN_LED, GPIO.LOW)
-GPIO.setup(PIN_PREV, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-GPIO.setup(PIN_PLAY, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-GPIO.setup(PIN_NEXT, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
-
 status_is_playing = False # for toggling play/pause (stores the current status from the pushState events)
 status_seek_pos = 0       # for seek +/- 10
 status_duration = 0       # for maximum seek
@@ -47,71 +38,78 @@ status_duration = 0       # for maximum seek
 socketIO = SocketIO('localhost', 3000)
 
 
+def send_to_volumio(*args):
+    logging.info("Sending to Volumio: {}".format(args))
+    socketIO.emit(*args)
+
 def play(uri, service = 'mpd'):
-    socketIO.emit('replaceAndPlay', {'service':service,'uri':uri})
+    send_to_volumio('replaceAndPlay', {'service':service,'uri':uri})
 
-def button_play_callback(channel):
-    if GPIO.input(channel) == GPIO.LOW: # ignore spurious triggers that seem to happen after a long press
-        time_button_pressed = time.time()
-        while GPIO.input(channel) == GPIO.LOW:
-            if time.time() - time_button_pressed > 1:
-                logging.info("STOP")
-                socketIO.emit('stop')
-                break
-            time.sleep(0.1)
-        duration_pressed = time.time() - time_button_pressed
-        if duration_pressed > 0.2 and duration_pressed < 1:
-            if status_is_playing:
-                logging.info("PAUSE")
-                socketIO.emit('pause')
-            else:
-                logging.info("PLAY")
-                socketIO.emit('play')
+def seek(step_seconds):
+    new_pos = status_seek_pos + step_seconds
+    if 0 <= new_pos <= status_duration:
+        send_to_volumio('seek', new_pos)
 
-def button_prev_next_callback(channel):
-    if GPIO.input(channel) == GPIO.LOW: # ignore spurious triggers that seem to happen after a long press
-        time_button_pressed = time.time()
-        time_seek = time_button_pressed
-        while GPIO.input(channel) == GPIO.LOW:
-            if time.time() - time_seek > 1:
-                if channel == PIN_PREV:
-                    new_pos = status_seek_pos - 10
-                elif channel == PIN_NEXT:
-                    new_pos = status_seek_pos + 10
-                if new_pos >= 0 and new_pos <= status_duration:
-                    logging.info("seek {}".format(new_pos))
-                    socketIO.emit('seek', new_pos)
-                time_seek = time.time()
-            time.sleep(0.1)
-        if time.time() - time_button_pressed < 1:
-            if channel == PIN_PREV:
-                logging.info("PREV")
-                socketIO.emit('prev')
-            elif (channel == PIN_NEXT):
-                logging.info("NEXT")
-                socketIO.emit('next')
+
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(PIN_SENSOR, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+GPIO.setup(PIN_LED, GPIO.OUT)
+GPIO.output(PIN_LED, GPIO.LOW)
+
+button_short_press_commands = {
+    PIN_PREV: lambda: send_to_volumio('prev'),
+    PIN_PLAY: lambda: send_to_volumio('pause' if status_is_playing else 'play'),
+    PIN_NEXT: lambda: send_to_volumio('next')
+}
+button_long_press_commands = {
+    PIN_PREV: lambda: seek(-10),
+    PIN_PLAY: lambda: send_to_volumio('stop'),
+    PIN_NEXT: lambda: seek(10)
+}
+
+def button_callback(channel):
+    time_button_down = time.time()
+    # 0.5 + 0.5 = 1 second delay for first long action
+    time_last_long_action = time_button_down + 0.5
+    while GPIO.input(channel) == GPIO.LOW:
+        # 0.5 seconds delay between subsequent long actons
+        if time.time() - time_last_long_action > 0.5:
+            button_long_press_commands.get(channel)()
+            time_last_long_action = time.time()
+        time.sleep(0.1)
+    # also ignore spurious triggers that sometimes seem to happen after a long press
+    if 0.2 <= time.time() - time_button_down < 1:
+        button_short_press_commands.get(channel)()
+
+for pin in (PIN_PLAY, PIN_PREV, PIN_NEXT):
+    GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+    GPIO.add_event_detect(pin, GPIO.FALLING, callback=button_callback, bouncetime=400)
+
 
 def on_pushState(*args):
-    logging.debug(args[0])
-    global status_is_playing
-    if args[0]['status'] == 'play':
-        status_is_playing = True
-    else:
-        status_is_playing = False
-    global status_seek_pos
-    if isinstance(args[0]['seek'], int):
-        status_seek_pos = args[0]['seek'] / 1000
-    global status_duration
-    if isinstance(args[0]['duration'], int):
-        status_duration = args[0]['duration']
+    if len(args) == 1:
+        volumio_status = args[0]
+        logging.debug(volumio_status)
+        try:
+            global status_is_playing
+            status_is_playing = volumio_status['status'] == 'play'
+            logging.debug("status_is_playing: {}".format(status_is_playing))
+        except Exception as e: logging.debug(e)
+        try:
+            global status_seek_pos
+            status_seek_pos = volumio_status['seek'] / 1000
+            logging.debug("status_seek_pos: {}".format(status_seek_pos))
+        except Exception as e: logging.debug(e)
+        try:
+            global status_duration
+            status_duration = volumio_status['duration']
+            logging.debug("status_duration: {}".format(status_duration))
+        except Exception as e: logging.debug(e)
 
 def events_thread():
     socketIO.wait()
 
 
-GPIO.add_event_detect(PIN_PLAY, GPIO.FALLING, callback=button_play_callback, bouncetime=400)
-GPIO.add_event_detect(PIN_PREV, GPIO.FALLING, callback=button_prev_next_callback, bouncetime=400)
-GPIO.add_event_detect(PIN_NEXT, GPIO.FALLING, callback=button_prev_next_callback, bouncetime=400)
 
 
 try:
